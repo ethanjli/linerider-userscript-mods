@@ -129,13 +129,18 @@ class TransformMod {
       y: preBB.y + 0.5 * preBB.height
     })
 
-    const along = this.state.along * Math.PI / 180
-    const preTransform = buildPreTransform(along)
-    const postTransform = buildPostTransform(along)
+    const alongRot = this.state.alongRot * Math.PI / 180
+    const preTransform = buildRotTransform(-alongRot)
     const selectedLines = []
     for (let line of pretransformedLines) {
-      const p1 = new V2(line.p1).sub(preCenter).transform(preTransform)
-      const p2 = new V2(line.p2).sub(preCenter).transform(preTransform)
+      const p1 = preparePointAlong(
+        new V2(line.p1),
+        preCenter, this.state.alongPerspX, this.state.alongPerspY, preTransform
+      )
+      const p2 = preparePointAlong(
+        new V2(line.p2),
+        preCenter, this.state.alongPerspX, this.state.alongPerspY, preTransform
+      )
       selectedLines.push({original: line, p1, p2})
     }
     const bb = getBoundingBox(selectedLines)
@@ -151,14 +156,21 @@ class TransformMod {
     const transform = this.getTransform()
     const transformedLines = []
 
+    const postTransform = buildRotTransform(alongRot)
     for (let line of selectedLines) {
       const p1 = restorePoint(
-        new V2(line.p1).sub(anchor).add(nudge).transform(transform),
-        anchor, postTransform, preCenter,
+        transformPersp(
+          new V2(line.p1).sub(anchor).add(nudge).transform(transform),
+          this.state.perspX, this.state.perspY
+        ),
+        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
       )
       const p2 = restorePoint(
-        new V2(line.p2).sub(anchor).add(nudge).transform(transform),
-        anchor, postTransform, preCenter,
+        transformPersp(
+          new V2(line.p2).sub(anchor).add(nudge).transform(transform),
+          this.state.perspX, this.state.perspY
+        ),
+        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
       )
 
       transformedLines.push({
@@ -171,7 +183,9 @@ class TransformMod {
     }
     this.store.dispatch(setLines(transformedLines))
 
-    this.drawBoundingBoxes(bb, anchor, transform, postTransform, preCenter)
+    this.drawBoundingBoxes(
+      bb, anchor, transform, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter
+    )
 
     this.changed = true
   }
@@ -185,7 +199,7 @@ class TransformMod {
     if (this.state.flipY) {
       scaleY *= -1
     }
-    const transform = buildTransform(
+    const transform = buildAffineTransform(
       this.state.shearX, this.state.shearY,
       scaleX, scaleY,
       this.state.rotate * Math.PI / 180
@@ -195,17 +209,19 @@ class TransformMod {
 
   active() {
     return this.state.active && this.selectedPoints.size > 0 && (
-      this.state.along !== 0 ||
+      this.state.alongPerspX !== 0 || this.state.alongPerspY !== 0 ||
+      this.state.alongRot !== 0 ||
       this.state.anchorX !== 0 || this.state.anchorY !== 0 ||
       this.state.nudgeX || this.state.nudgeY ||
       this.state.shearX !== 0 || this.state.shearY !== 0 ||
       this.state.flipX || this.state.flipY ||
       this.state.scaleX !== 1 || this.state.scaleY !== 1 || this.state.scale !== 1 ||
-      this.state.rotate !== 0
+      this.state.rotate !== 0 ||
+      this.state.perspX || this.state.perspY
     )
   }
 
-  drawBoundingBoxes(bb, anchor, transform, postTransform, preCenter) {
+  drawBoundingBoxes(bb, anchor, transform, postTransform, alongPerspX, alongPerspY, preCenter) {
     const zoom = getEditorZoom(this.store.getState())
     const preBox = genBoundingBox(
       bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
@@ -215,11 +231,11 @@ class TransformMod {
     for (let line of preBox) {
       const p1 = restorePoint(
         new V2(line.p1).sub(anchor),
-        anchor, postTransform, preCenter,
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       const p2 = restorePoint(
         new V2(line.p2).sub(anchor),
-        anchor, postTransform, preCenter,
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       line.p1.x = p1.x
       line.p1.y = p1.y
@@ -233,12 +249,18 @@ class TransformMod {
     )
     for (let line of postBox) {
       const p1 = restorePoint(
-        new V2(line.p1).sub(anchor).transform(transform),
-        anchor, postTransform, preCenter,
+        transformPersp(
+          new V2(line.p1).sub(anchor).transform(transform),
+          this.state.perspX, this.state.perspY
+        ),
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       const p2 = restorePoint(
-        new V2(line.p2).sub(anchor).transform(transform),
-        anchor, postTransform, preCenter,
+        transformPersp(
+          new V2(line.p2).sub(anchor).transform(transform),
+          this.state.perspX, this.state.perspY
+        ),
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       line.p1.x = p1.x
       line.p1.y = p1.y
@@ -265,7 +287,10 @@ function main () {
       this.state = {
         active: false,
         advanced: false,
-        along: 0,
+        perspective: false,
+        alongPerspX: 0,
+        alongPerspY: 0,
+        alongRot: 0,
         anchorX: 0,
         anchorY: 0,
         nudgeX: 0,
@@ -278,6 +303,8 @@ function main () {
         scaleX: 1,
         scaleY: 1,
         rotate: 0,
+        perspX: 0,
+        perspY: 0,
       }
 
       this.transformMod = new TransformMod(store, this.state)
@@ -293,7 +320,9 @@ function main () {
       this.onReset = (key) => {
         const defaults = {
           scale: 1,
-          along: 0,
+          alongPerspX: 0,
+          alongPerspY: 0,
+          alongRot: 0,
           anchorX: 0,
           anchorY: 0,
           nudgeX: 0,
@@ -305,6 +334,8 @@ function main () {
           scaleX: 1,
           scaleY: 1,
           rotate: 0,
+          perspX: 0,
+          perspY: 0,
         }
         let changedState = {}
         changedState[key] = defaults[key]
@@ -315,7 +346,9 @@ function main () {
         this.transformMod.commit()
         this.setState({
           scale: 1,
-          along: 0,
+          alongPerspX: 0,
+          alongPerspY: 0,
+          alongRot: 0,
           anchorX: 0,
           anchorY: 0,
           nudgeX: 0,
@@ -327,6 +360,8 @@ function main () {
           scaleX: 1,
           scaleY: 1,
           rotate: 0,
+          perspX: 0,
+          perspY: 0,
         })
       }
     }
@@ -379,11 +414,21 @@ function main () {
     render () {
       let tools = []
       if (this.state.active) {
-        tools = [this.renderCheckbox('advanced')]
+        tools = [
+          this.renderCheckbox('advanced'),
+          this.renderCheckbox('perspective'),
+        ]
         if (this.state.advanced) {
+          if (this.state.perspective) {
+            tools = [
+              ...tools,
+              this.renderSlider('alongPerspX', { min: -1, max: 1, step: 0.01 }),
+              this.renderSlider('alongPerspY', { min: -1, max: 1, step: 0.01 }),
+            ]
+          }
           tools = [
             ...tools,
-            this.renderSlider('along', { min: -180, max: 180, step: 1 }),
+            this.renderSlider('alongRot', { min: -180, max: 180, step: 1 }),
             this.renderSlider('anchorX', { min: -0.5, max: 0.5, step: 0.01 }),
             this.renderSlider('anchorY', { min: -0.5, max: 0.5, step: 0.01 }),
             this.renderSlider('nudgeX', { min: -20, max: 20, step: 0.1 }),
@@ -400,6 +445,16 @@ function main () {
           this.renderSlider('scaleY', { min: 0, max: 2, step: 0.01 }),
           this.renderSlider('scale', { min: 0, max: 2, step: 0.01 }),
           this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
+        ]
+        if (this.state.perspective) {
+          tools = [
+            ...tools,
+            this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
+            this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
+          ]
+        }
+        tools = [
+          ...tools,
           e('button', { style: { float: 'left' }, onClick: () => this.onCommit() }, 'Commit'),
         ]
       }
@@ -454,7 +509,7 @@ function getLinesFromPoints (points) {
   return new Set([...points].map(point => point >> 1))
 }
 
-function buildTransform(shearX, shearY, scaleX, scaleY, rot) {
+function buildAffineTransform(shearX, shearY, scaleX, scaleY, rot) {
   const { V2 } = window
 
   let tShear = [1 + shearX * shearY, shearX, shearY, 1, 0, 0]
@@ -464,24 +519,29 @@ function buildTransform(shearX, shearY, scaleX, scaleY, rot) {
 
   return [u.x, v.x, u.y, v.y, 0, 0]
 }
-function buildPreTransform(along) {
+function buildRotTransform(rot) {
   const { V2 } = window
 
-  let u = V2.from(1, 0).rot(-along)
-  let v = V2.from(0, 1).rot(-along)
+  let u = V2.from(1, 0).rot(rot)
+  let v = V2.from(0, 1).rot(rot)
 
   return [u.x, v.x, u.y, v.y, 0, 0]
 }
-function buildPostTransform(along) {
-  const { V2 } = window
-
-  let u = V2.from(1, 0).rot(along)
-  let v = V2.from(0, 1).rot(along)
-
-  return [u.x, v.x, u.y, v.y, 0, 0]
+function preparePointAlong(p, preCenter, alongPerspX, alongPerspY, preTransform) {
+  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY).transform(preTransform)
 }
-function restorePoint(p, anchor, postTransform, preCenter) {
-  return p.add(anchor).transform(postTransform).add(preCenter)
+function transformPersp(p, perspX, perspY) {
+  const pt = new V2(p)
+  const w = (1 + 0.01 * perspX * pt.x + 0.01 * perspY * pt.y)
+  pt.x = pt.x / w
+  pt.y = pt.y / w
+  return pt
+}
+function restorePoint(p, anchor, postTransform, alongPerspX, alongPerspY, preCenter) {
+  return transformPersp(
+    p.add(anchor).transform(postTransform),
+    alongPerspX, alongPerspY
+  ).add(preCenter)
 }
 
 function parseFloatOrDefault (string, defaultValue = 0) {
