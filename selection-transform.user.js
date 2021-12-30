@@ -152,8 +152,14 @@ class TransformMod {
     const transformedLines = []
 
     for (let line of selectedLines) {
-      const p1 = new V2(line.p1).sub(anchor).add(nudge).transform(transform).add(anchor).transform(postTransform).add(preCenter)
-      const p2 = new V2(line.p2).sub(anchor).add(nudge).transform(transform).add(anchor).transform(postTransform).add(preCenter)
+      const p1 = restorePoint(
+        new V2(line.p1).sub(anchor).add(nudge).transform(transform),
+        anchor, postTransform, preCenter,
+      )
+      const p2 = restorePoint(
+        new V2(line.p2).sub(anchor).add(nudge).transform(transform),
+        anchor, postTransform, preCenter,
+      )
 
       transformedLines.push({
         ...line.original.toJSON(),
@@ -165,21 +171,7 @@ class TransformMod {
     }
     this.store.dispatch(setLines(transformedLines))
 
-    const zoom = getEditorZoom(this.store.getState())
-    const renderedBox = genBoundingBox(
-      bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
-      anchor.x, anchor.y, 10 / zoom,
-      1 / zoom, new Millions.Color(0, 0, 0, 255), 0
-    )
-    for (let line of renderedBox) {
-      const p1 = new V2(line.p1).sub(anchor).transform(transform).add(anchor).transform(postTransform).add(preCenter)
-      const p2 = new V2(line.p2).sub(anchor).transform(transform).add(anchor).transform(postTransform).add(preCenter)
-      line.p1.x = p1.x
-      line.p1.y = p1.y
-      line.p2.x = p2.x
-      line.p2.y = p2.y
-    }
-    this.store.dispatch(setEditScene(Millions.Scene.fromEntities(renderedBox)))
+    this.drawBoundingBoxes(bb, anchor, transform, postTransform, preCenter)
 
     this.changed = true
   }
@@ -211,6 +203,50 @@ class TransformMod {
       this.state.scaleX !== 1 || this.state.scaleY !== 1 || this.state.scale !== 1 ||
       this.state.rotate !== 0
     )
+  }
+
+  drawBoundingBoxes(bb, anchor, transform, postTransform, preCenter) {
+    const zoom = getEditorZoom(this.store.getState())
+    const preBox = genBoundingBox(
+      bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
+      anchor.x, anchor.y, 20 / zoom,
+      1 / zoom, new Millions.Color(0, 0, 0, 64), 0
+    )
+    for (let line of preBox) {
+      const p1 = restorePoint(
+        new V2(line.p1).sub(anchor),
+        anchor, postTransform, preCenter,
+      )
+      const p2 = restorePoint(
+        new V2(line.p2).sub(anchor),
+        anchor, postTransform, preCenter,
+      )
+      line.p1.x = p1.x
+      line.p1.y = p1.y
+      line.p2.x = p2.x
+      line.p2.y = p2.y
+    }
+    const postBox = genBoundingBox(
+      bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
+      anchor.x, anchor.y, 20 / zoom,
+      1 / zoom, new Millions.Color(0, 0, 0, 255), 1
+    )
+    for (let line of postBox) {
+      const p1 = restorePoint(
+        new V2(line.p1).sub(anchor).transform(transform),
+        anchor, postTransform, preCenter,
+      )
+      const p2 = restorePoint(
+        new V2(line.p2).sub(anchor).transform(transform),
+        anchor, postTransform, preCenter,
+      )
+      line.p1.x = p1.x
+      line.p1.y = p1.y
+      line.p2.x = p2.x
+      line.p2.y = p2.y
+    }
+    const boxes = this.state.advanced ? [...preBox, ...postBox] : postBox
+    this.store.dispatch(setEditScene(Millions.Scene.fromEntities(boxes)))
   }
 }
 
@@ -444,6 +480,9 @@ function buildPostTransform(along) {
 
   return [u.x, v.x, u.y, v.y, 0, 0]
 }
+function restorePoint(p, anchor, postTransform, preCenter) {
+  return p.add(anchor).transform(postTransform).add(preCenter)
+}
 
 function parseFloatOrDefault (string, defaultValue = 0) {
   const x = parseFloat(string)
@@ -511,7 +550,7 @@ function genBoundingBox (x1, y1, x2, y2, anchorX, anchorY, anchorSize, thickness
     genLine(x2, y2, x2, y1, thickness, color, zIndex + 0.2),
     genLine(x2, y1, x1, y1, thickness, color, zIndex + 0.3),
     // Transformation anchor
-    genLine(anchorX - anchorSize, anchorY, anchorX + anchorSize, anchorY, thickness, color, zIndex + 0.4),
-    genLine(anchorX, anchorY - anchorSize, anchorX, anchorY + anchorSize, thickness, color, zIndex + 0.5),
+    genLine(anchorX, anchorY, anchorX + anchorSize, anchorY, thickness * 2, color, zIndex + 0.4),
+    genLine(anchorX, anchorY, anchorX, anchorY + anchorSize, thickness * 2, color, zIndex + 0.5),
   ]
 }
