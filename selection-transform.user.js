@@ -383,7 +383,7 @@ function main () {
       }
       return e('div', null,
         key,
-        e('input', { style: { width: '3em' }, type: 'number', ...numberProps }),
+        e('input', { style: { width: '4em' }, type: 'number', ...numberProps }),
         e('input', { type: 'range', ...rangeProps, onFocus: e => e.target.blur() }),
         e('button', { onClick: () => this.onReset(key) }, 'Reset')
       )
@@ -402,8 +402,8 @@ function main () {
           if (this.state.warpTools) {
             tools = [
               ...tools,
-              this.renderSlider('alongPerspX', { min: -1, max: 1, step: 0.01 }),
-              this.renderSlider('alongPerspY', { min: -1, max: 1, step: 0.01 }),
+              this.renderSlider('alongPerspX', { min: -0.5, max: 0.5, step: 0.001 }),
+              this.renderSlider('alongPerspY', { min: -0.5, max: 0.5, step: 0.001 }),
             ]
           }
           tools = [
@@ -432,17 +432,17 @@ function main () {
         if (this.state.warpTools) {
           tools = [
             ...tools,
-            this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
-            this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
+            this.renderSlider('perspX', { min: -0.5, max: 0.5, step: 0.001 }),
+            this.renderSlider('perspY', { min: -0.5, max: 0.5, step: 0.001 }),
           ]
         }
         if (this.state.translateTools) {
           tools = [
             ...tools,
-            this.renderSlider('nudgeXSmall', { min: -20, max: 20, step: 0.2 }),
-            this.renderSlider('nudgeXBig', { min: -2000, max: 2000, step: 20 }),
-            this.renderSlider('nudgeYSmall', { min: -20, max: 20, step: 0.2 }),
-            this.renderSlider('nudgeYBig', { min: -2000, max: 2000, step: 20 }),
+            this.renderSlider('nudgeXSmall', { min: -10, max: 10, step: 0.1 }),
+            this.renderSlider('nudgeXBig', { min: -2000, max: 2000, step: 10 }),
+            this.renderSlider('nudgeYSmall', { min: -10, max: 10, step: 0.1 }),
+            this.renderSlider('nudgeYBig', { min: -2000, max: 2000, step: 10 }),
           ]
         }
         tools = [
