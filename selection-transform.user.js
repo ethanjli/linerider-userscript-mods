@@ -146,11 +146,11 @@ class TransformMod {
     const bb = getBoundingBox(selectedLines)
     const anchor = new V2({
       x: bb.x + (0.5 + this.state.anchorX) * bb.width,
-      y: bb.y + (0.5 + this.state.anchorY) * bb.height
+      y: bb.y + (0.5 - this.state.anchorY) * bb.height
     })
     const nudge = new V2({
-      x: this.state.nudgeX,
-      y: this.state.nudgeY
+      x: this.state.nudgeXSmall + this.state.nudgeXBig,
+      y: -1 * (this.state.nudgeYSmall + this.state.nudgeYBig)
     })
 
     const transform = this.getTransform()
@@ -160,18 +160,18 @@ class TransformMod {
     for (let line of selectedLines) {
       const p1 = restorePoint(
         transformPersp(
-          new V2(line.p1).sub(anchor).add(nudge).transform(transform),
+          new V2(line.p1).sub(anchor).transform(transform),
           this.state.perspX, this.state.perspY
         ),
         anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
+      ).add(nudge)
       const p2 = restorePoint(
         transformPersp(
-          new V2(line.p2).sub(anchor).add(nudge).transform(transform),
+          new V2(line.p2).sub(anchor).transform(transform),
           this.state.perspX, this.state.perspY
         ),
         anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
+      ).add(nudge)
 
       transformedLines.push({
         ...line.original.toJSON(),
@@ -200,7 +200,7 @@ class TransformMod {
       scaleY *= -1
     }
     const transform = buildAffineTransform(
-      this.state.shearX, this.state.shearY,
+      this.state.skewX, this.state.skewY,
       scaleX, scaleY,
       this.state.rotate * Math.PI / 180
     )
@@ -209,15 +209,17 @@ class TransformMod {
 
   active() {
     return this.state.active && this.selectedPoints.size > 0 && (
+      this.state.advancedTools ||
       this.state.alongPerspX !== 0 || this.state.alongPerspY !== 0 ||
       this.state.alongRot !== 0 ||
       this.state.anchorX !== 0 || this.state.anchorY !== 0 ||
-      this.state.nudgeX || this.state.nudgeY ||
-      this.state.shearX !== 0 || this.state.shearY !== 0 ||
-      this.state.flipX || this.state.flipY ||
+      this.state.skewX !== 0 || this.state.skewY !== 0 ||
       this.state.scaleX !== 1 || this.state.scaleY !== 1 || this.state.scale !== 1 ||
+      this.state.flipX || this.state.flipY ||
       this.state.rotate !== 0 ||
-      this.state.perspX || this.state.perspY
+      this.state.perspX || this.state.perspY ||
+      this.state.nudgeXSmall !== 0 || this.state.nudgeXBig !== 0 ||
+      this.state.nudgeYSmall !== 0 || this.state.nudgeYBig !== 0
     )
   }
 
@@ -267,7 +269,7 @@ class TransformMod {
       line.p2.x = p2.x
       line.p2.y = p2.y
     }
-    const boxes = this.state.advanced ? [...preBox, ...postBox] : postBox
+    const boxes = this.state.advancedTools ? [...preBox, ...postBox] : postBox
     this.store.dispatch(setEditScene(Millions.Scene.fromEntities(boxes)))
   }
 }
@@ -284,27 +286,33 @@ function main () {
     constructor (props) {
       super(props)
 
-      this.state = {
-        active: false,
-        advanced: false,
-        perspective: false,
+      this.defaults = {
+        scale: 1,
         alongPerspX: 0,
         alongPerspY: 0,
         alongRot: 0,
         anchorX: 0,
         anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scale: 1,
+        skewX: 0,
+        skewY: 0,
         scaleX: 1,
         scaleY: 1,
+        flipX: false,
+        flipY: false,
         rotate: 0,
         perspX: 0,
         perspY: 0,
+        nudgeXSmall: 0,
+        nudgeXBig: 0,
+        nudgeYSmall: 0,
+        nudgeYBig: 0,
+      }
+      this.state = {
+        ...this.defaults,
+        active: false,
+        advancedTools: false,
+        warpTools: false,
+        translateTools: false,
       }
 
       this.transformMod = new TransformMod(store, this.state)
@@ -316,58 +324,28 @@ function main () {
           this.setState({ active: false })
         }
       })
-
-      this.onReset = (key) => {
-        const defaults = {
-          scale: 1,
-          alongPerspX: 0,
-          alongPerspY: 0,
-          alongRot: 0,
-          anchorX: 0,
-          anchorY: 0,
-          nudgeX: 0,
-          nudgeY: 0,
-          shearX: 0,
-          shearY: 0,
-          flipX: false,
-          flipY: false,
-          scaleX: 1,
-          scaleY: 1,
-          rotate: 0,
-          perspX: 0,
-          perspY: 0,
-        }
-        let changedState = {}
-        changedState[key] = defaults[key]
-        this.setState(changedState)
-      }
-
-      this.onCommit = () => {
-        this.transformMod.commit()
-        this.setState({
-          scale: 1,
-          alongPerspX: 0,
-          alongPerspY: 0,
-          alongRot: 0,
-          anchorX: 0,
-          anchorY: 0,
-          nudgeX: 0,
-          nudgeY: 0,
-          shearX: 0,
-          shearY: 0,
-          flipX: false,
-          flipY: false,
-          scaleX: 1,
-          scaleY: 1,
-          rotate: 0,
-          perspX: 0,
-          perspY: 0,
-        })
-      }
     }
 
     componentWillUpdate (nextProps, nextState) {
       this.transformMod.onUpdate(nextState)
+    }
+
+    onReset (key) {
+      let changedState = {}
+      changedState[key] = this.defaults[key]
+      this.setState(changedState)
+    }
+
+    onResetAll (key) {
+      this.setState({...this.defaults})
+    }
+
+    onCommit () {
+      this.transformMod.commit()
+      this.setState({
+        ...this.defaults,
+        active: false,
+      })
     }
 
     onActivate () {
@@ -415,11 +393,13 @@ function main () {
       let tools = []
       if (this.state.active) {
         tools = [
-          this.renderCheckbox('advanced'),
-          this.renderCheckbox('perspective'),
+          this.renderCheckbox('advancedTools'),
+          this.renderCheckbox('warpTools'),
+          this.renderCheckbox('translateTools'),
+          e('hr'),
         ]
-        if (this.state.advanced) {
-          if (this.state.perspective) {
+        if (this.state.advancedTools) {
+          if (this.state.warpTools) {
             tools = [
               ...tools,
               this.renderSlider('alongPerspX', { min: -1, max: 1, step: 0.01 }),
@@ -431,31 +411,44 @@ function main () {
             this.renderSlider('alongRot', { min: -180, max: 180, step: 1 }),
             this.renderSlider('anchorX', { min: -0.5, max: 0.5, step: 0.01 }),
             this.renderSlider('anchorY', { min: -0.5, max: 0.5, step: 0.01 }),
-            this.renderSlider('nudgeX', { min: -20, max: 20, step: 0.1 }),
-            this.renderSlider('nudgeY', { min: -20, max: 20, step: 0.1 }),
+          ]
+        }
+        if (this.state.warpTools) {
+          tools = [
+            ...tools,
+            this.renderSlider('skewX', { min: -2, max: 2, step: 0.01 }),
+            this.renderSlider('skewY', { min: -2, max: 2, step: 0.01 }),
           ]
         }
         tools = [
           ...tools,
-          this.renderSlider('shearX', { min: -2, max: 2, step: 0.01 }),
-          this.renderSlider('shearY', { min: -2, max: 2, step: 0.01 }),
-          this.renderCheckbox('flipX'),
-          this.renderCheckbox('flipY'),
           this.renderSlider('scaleX', { min: 0, max: 2, step: 0.01 }),
           this.renderSlider('scaleY', { min: 0, max: 2, step: 0.01 }),
           this.renderSlider('scale', { min: 0, max: 2, step: 0.01 }),
+          this.renderCheckbox('flipX'),
+          this.renderCheckbox('flipY'),
           this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
         ]
-        if (this.state.perspective) {
+        if (this.state.warpTools) {
           tools = [
             ...tools,
             this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
             this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
           ]
         }
+        if (this.state.translateTools) {
+          tools = [
+            ...tools,
+            this.renderSlider('nudgeXSmall', { min: -20, max: 20, step: 0.2 }),
+            this.renderSlider('nudgeXBig', { min: -2000, max: 2000, step: 20 }),
+            this.renderSlider('nudgeYSmall', { min: -20, max: 20, step: 0.2 }),
+            this.renderSlider('nudgeYBig', { min: -2000, max: 2000, step: 20 }),
+          ]
+        }
         tools = [
           ...tools,
           e('button', { style: { float: 'left' }, onClick: () => this.onCommit() }, 'Commit'),
+          e('button', { style: { float: 'left' }, onClick: () => this.onResetAll() }, 'Reset'),
         ]
       }
       return e('div',
@@ -611,6 +604,6 @@ function genBoundingBox (x1, y1, x2, y2, anchorX, anchorY, anchorSize, thickness
     genLine(x2, y1, x1, y1, thickness, color, zIndex + 0.3),
     // Transformation anchor
     genLine(anchorX, anchorY, anchorX + anchorSize, anchorY, thickness * 2, color, zIndex + 0.4),
-    genLine(anchorX, anchorY, anchorX, anchorY + anchorSize, thickness * 2, color, zIndex + 0.5),
+    genLine(anchorX, anchorY, anchorX, anchorY - anchorSize, thickness * 2, color, zIndex + 0.5),
   ]
 }
