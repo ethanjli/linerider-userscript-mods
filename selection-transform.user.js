@@ -156,21 +156,37 @@ class TransformMod {
     const transform = this.getTransform()
     const transformedLines = []
 
+    const alongPerspX = this.state.alongPerspX * 0.01
+    const alongPerspY = this.state.alongPerspY * 0.01
     const postTransform = buildRotTransform(alongRot)
+    let perspX = this.state.perspX
+    let perspY = this.state.perspY
+    if (this.state.relativePersp) {
+      // TODO: also figure out how to make it robust for skew and rotation, not just scaling!
+      // For example, maybe we should compute a new bounding box of the transformed lines and
+      // then use those to scale perspX and perspY? But that might be too computationally expensive
+      // when dragging sliders...
+      perspX = perspX / (bb.width * this.state.scale * this.state.scaleX)
+      perspY = perspY / (bb.height * this.state.scale * this.state.scaleY)
+    } else {
+      perspX = 0.01 * perspX
+      perspY = 0.01 * perspY
+    }
+    const perspSafety = Math.pow(10, this.state.perspClamping)
     for (let line of selectedLines) {
       const p1 = restorePoint(
         transformPersp(
           new V2(line.p1).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       ).add(nudge)
       const p2 = restorePoint(
         transformPersp(
           new V2(line.p2).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       ).add(nudge)
 
       transformedLines.push({
@@ -184,7 +200,7 @@ class TransformMod {
     this.store.dispatch(setLines(transformedLines))
 
     this.drawBoundingBoxes(
-      bb, anchor, transform, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter
+      bb, anchor, transform, postTransform, alongPerspX, alongPerspY, preCenter
     )
 
     this.changed = true
@@ -249,18 +265,28 @@ class TransformMod {
       anchor.x, anchor.y, 20 / zoom,
       1 / zoom, new Millions.Color(0, 0, 0, 255), 1
     )
+    let perspX = this.state.perspX
+    let perspY = this.state.perspY
+    if (this.state.relativePersp) {
+      perspX = perspX / (bb.width * this.state.scale * this.state.scaleX)
+      perspY = perspY / (bb.height * this.state.scale * this.state.scaleY)
+    } else {
+      perspX = 0.01 * perspX
+      perspY = 0.01 * perspY
+    }
+    const perspSafety = Math.pow(10, this.state.perspClamping)
     for (let line of postBox) {
       const p1 = restorePoint(
         transformPersp(
           new V2(line.p1).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
         anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       const p2 = restorePoint(
         transformPersp(
           new V2(line.p2).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
         anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
@@ -313,6 +339,8 @@ function main () {
         advancedTools: false,
         warpTools: false,
         translateTools: false,
+        relativePersp: true,
+        perspClamping: -5,
       }
 
       this.transformMod = new TransformMod(store, this.state)
@@ -430,10 +458,17 @@ function main () {
           this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
         ]
         if (this.state.warpTools) {
+          if (this.state.advancedTools) {
+            tools = [
+              ...tools,
+              this.renderCheckbox('relativePersp'),
+              this.renderSlider('perspClamping', { min: -5, max: 0, step: 0.01 }),
+            ]
+          }
           tools = [
             ...tools,
-            this.renderSlider('perspX', { min: -0.5, max: 0.5, step: 0.001 }),
-            this.renderSlider('perspY', { min: -0.5, max: 0.5, step: 0.001 }),
+            this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
+            this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
           ]
         }
         if (this.state.translateTools) {
@@ -521,11 +556,14 @@ function buildRotTransform(rot) {
   return [u.x, v.x, u.y, v.y, 0, 0]
 }
 function preparePointAlong(p, preCenter, alongPerspX, alongPerspY, preTransform) {
-  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY).transform(preTransform)
+  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY, 0).transform(preTransform)
 }
-function transformPersp(p, perspX, perspY) {
+function transformPersp(p, perspX, perspY, epsilon) {
   const pt = new V2(p)
-  const w = (1 + 0.01 * perspX * pt.x + 0.01 * perspY * pt.y)
+  let w = (1 + perspX * pt.x + perspY * pt.y)
+  if (Math.abs(w) < epsilon) {
+      w = Math.sign(w) * epsilon
+  }
   pt.x = pt.x / w
   pt.y = pt.y / w
   return pt
@@ -533,7 +571,7 @@ function transformPersp(p, perspX, perspY) {
 function restorePoint(p, anchor, postTransform, alongPerspX, alongPerspY, preCenter) {
   return transformPersp(
     p.add(anchor).transform(postTransform),
-    alongPerspX, alongPerspY
+    alongPerspX, alongPerspY, 0
   ).add(preCenter)
 }
 
