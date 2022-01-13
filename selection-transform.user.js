@@ -424,12 +424,6 @@ function main () {
     render () {
       let tools = []
       if (this.state.active) {
-        tools = [
-          this.renderCheckbox('advancedTools'),
-          this.renderCheckbox('warpTools'),
-          this.renderCheckbox('translateTools'),
-          e('hr'),
-        ]
         if (this.state.advancedTools) {
           if (this.state.warpTools) {
             tools = [
@@ -484,6 +478,13 @@ function main () {
             this.renderSlider('nudgeYBig', { min: -2000, max: 2000, step: 10 }),
           ]
         }
+        tools = [
+          ...tools,
+          e('hr'),
+          this.renderCheckbox('advancedTools'),
+          this.renderCheckbox('warpTools'),
+          this.renderCheckbox('translateTools'),
+        ]
         tools = [
           ...tools,
           e('button', { style: { float: 'left' }, onClick: () => this.onCommit() }, 'Commit'),
