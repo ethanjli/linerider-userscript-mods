@@ -161,18 +161,22 @@ class TransformMod {
     const postTransform = buildRotTransform(alongRot)
     let perspX = this.state.perspX
     let perspY = this.state.perspY
+    const perspSafety = Math.pow(10, this.state.perspClamping)
     if (this.state.relativePersp) {
-      // TODO: also figure out how to make it robust for skew and rotation, not just scaling!
-      // For example, maybe we should compute a new bounding box of the transformed lines and
-      // then use those to scale perspX and perspY? But that might be too computationally expensive
-      // when dragging sliders...
-      perspX = perspX / (bb.width * this.state.scale * this.state.scaleX)
-      perspY = perspY / (bb.height * this.state.scale * this.state.scaleY)
+      let perspXDenominator = bb.width * this.state.scale * this.state.scaleX
+      if (Math.abs(bb.width) < perspSafety) {
+        perspXDenominator = perspSafety
+      }
+      perspX = perspX / perspXDenominator
+      let perspYDenominator = bb.height * this.state.scale * this.state.scaleY
+      if (Math.abs(perspYDenominator) < perspSafety) {
+        perspYDenominator = perspSafety
+      }
+      perspY = perspY / perspYDenominator
     } else {
       perspX = 0.01 * perspX
       perspY = 0.01 * perspY
     }
-    const perspSafety = Math.pow(10, this.state.perspClamping)
     for (let line of selectedLines) {
       const p1 = restorePoint(
         transformPersp(
