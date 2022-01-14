@@ -106,25 +106,25 @@ function main() {
         "Polygon Tool",
         e('div', null,
           'Sides (small)',
-          e('input', { style: { width: '3em' }, type: 'number', onChange: onSidesSmallChange, min: 1, value: this.state.sidesSmall }),
+          e('input', { style: { width: '4em' }, type: 'number', onChange: onSidesSmallChange, min: 1, value: this.state.sidesSmall, step: 1 }),
           e('input', { type: 'range', onChange: onSidesSmallChange, onFocus: e => e.target.blur(), min: 1, max: 10, step: 1, value: this.state.sidesSmall })
         ),
         e('div', null,
           'Sides (large)',
-          e('input', { style: { width: '3em' }, type: 'number', onChange: onSidesLargeChange, min: 0, value: this.state.sidesLarge }),
+          e('input', { style: { width: '4em' }, type: 'number', onChange: onSidesLargeChange, min: 0, value: this.state.sidesLarge, step: 10 }),
           e('input', { type: 'range', onChange: onSidesLargeChange, onFocus: e => e.target.blur(), min: 0, max: 500, step: 10, value: this.state.sidesLarge })
         ),
         e("div", null, [
           e('div', null,
             'Size (small)',
-            e('input', { style: { width: '3em' }, type: 'number', onChange: onSizeSmallChange, min: 0, value: this.state.sizeSmall }),
-            e('input', { type: 'range', onChange: onSizeSmallChange, onFocus: e => e.target.blur(), min: 0, max: 100, step: 0.1, value: this.state.sizeSmall })
+            e('input', { style: { width: '4em' }, type: 'number', onChange: onSizeSmallChange, min: 0, value: this.state.sizeSmall, step: 1 }),
+            e('input', { type: 'range', onChange: onSizeSmallChange, onFocus: e => e.target.blur(), min: 0, max: 100, step: 1, value: this.state.sizeSmall })
           ),
         ]),
         e("div", null, [
           e('div', null,
             'Size (large)',
-            e('input', { style: { width: '3em' }, type: 'number', onChange: onSizeLargeChange, min: 0, value: this.state.sizeLarge }),
+            e('input', { style: { width: '4em' }, type: 'number', onChange: onSizeLargeChange, min: 0, value: this.state.sizeLarge, step: 100 }),
             e('input', { type: 'range', onChange: onSizeLargeChange, onFocus: e => e.target.blur(), min: 0, max: 1000, step: 100, value: this.state.sizeLarge })
           ),
         ]),
