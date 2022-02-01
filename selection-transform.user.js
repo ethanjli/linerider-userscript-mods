@@ -146,32 +146,52 @@ class TransformMod {
     const bb = getBoundingBox(selectedLines)
     const anchor = new V2({
       x: bb.x + (0.5 + this.state.anchorX) * bb.width,
-      y: bb.y + (0.5 + this.state.anchorY) * bb.height
+      y: bb.y + (0.5 - this.state.anchorY) * bb.height
     })
     const nudge = new V2({
-      x: this.state.nudgeX,
-      y: this.state.nudgeY
+      x: this.state.nudgeXSmall + this.state.nudgeXBig,
+      y: -1 * (this.state.nudgeYSmall + this.state.nudgeYBig)
     })
 
     const transform = this.getTransform()
     const transformedLines = []
 
+    const alongPerspX = this.state.alongPerspX * 0.01
+    const alongPerspY = this.state.alongPerspY * 0.01
     const postTransform = buildRotTransform(alongRot)
+    let perspX = this.state.perspX
+    let perspY = this.state.perspY
+    const perspSafety = Math.pow(10, this.state.perspClamping)
+    if (this.state.relativePersp) {
+      let perspXDenominator = bb.width * this.state.scale * this.state.scaleX
+      if (Math.abs(bb.width) < perspSafety) {
+        perspXDenominator = perspSafety
+      }
+      perspX = perspX / perspXDenominator
+      let perspYDenominator = bb.height * this.state.scale * this.state.scaleY
+      if (Math.abs(perspYDenominator) < perspSafety) {
+        perspYDenominator = perspSafety
+      }
+      perspY = perspY / perspYDenominator
+    } else {
+      perspX = 0.01 * perspX
+      perspY = 0.01 * perspY
+    }
     for (let line of selectedLines) {
       const p1 = restorePoint(
         transformPersp(
-          new V2(line.p1).sub(anchor).add(nudge).transform(transform),
-          this.state.perspX, this.state.perspY
+          new V2(line.p1).sub(anchor).transform(transform),
+          perspX, perspY, perspSafety
         ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
+      ).add(nudge)
       const p2 = restorePoint(
         transformPersp(
-          new V2(line.p2).sub(anchor).add(nudge).transform(transform),
-          this.state.perspX, this.state.perspY
+          new V2(line.p2).sub(anchor).transform(transform),
+          perspX, perspY, perspSafety
         ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
+        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
+      ).add(nudge)
 
       transformedLines.push({
         ...line.original.toJSON(),
@@ -184,7 +204,7 @@ class TransformMod {
     this.store.dispatch(setLines(transformedLines))
 
     this.drawBoundingBoxes(
-      bb, anchor, transform, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter
+      bb, anchor, transform, postTransform, alongPerspX, alongPerspY, preCenter
     )
 
     this.changed = true
@@ -200,7 +220,7 @@ class TransformMod {
       scaleY *= -1
     }
     const transform = buildAffineTransform(
-      this.state.shearX, this.state.shearY,
+      this.state.skewX, this.state.skewY,
       scaleX, scaleY,
       this.state.rotate * Math.PI / 180
     )
@@ -209,15 +229,17 @@ class TransformMod {
 
   active() {
     return this.state.active && this.selectedPoints.size > 0 && (
+      this.state.advancedTools ||
       this.state.alongPerspX !== 0 || this.state.alongPerspY !== 0 ||
       this.state.alongRot !== 0 ||
       this.state.anchorX !== 0 || this.state.anchorY !== 0 ||
-      this.state.nudgeX || this.state.nudgeY ||
-      this.state.shearX !== 0 || this.state.shearY !== 0 ||
-      this.state.flipX || this.state.flipY ||
+      this.state.skewX !== 0 || this.state.skewY !== 0 ||
       this.state.scaleX !== 1 || this.state.scaleY !== 1 || this.state.scale !== 1 ||
+      this.state.flipX || this.state.flipY ||
       this.state.rotate !== 0 ||
-      this.state.perspX || this.state.perspY
+      this.state.perspX || this.state.perspY ||
+      this.state.nudgeXSmall !== 0 || this.state.nudgeXBig !== 0 ||
+      this.state.nudgeYSmall !== 0 || this.state.nudgeYBig !== 0
     )
   }
 
@@ -247,18 +269,28 @@ class TransformMod {
       anchor.x, anchor.y, 20 / zoom,
       1 / zoom, new Millions.Color(0, 0, 0, 255), 1
     )
+    let perspX = this.state.perspX
+    let perspY = this.state.perspY
+    if (this.state.relativePersp) {
+      perspX = perspX / (bb.width * this.state.scale * this.state.scaleX)
+      perspY = perspY / (bb.height * this.state.scale * this.state.scaleY)
+    } else {
+      perspX = 0.01 * perspX
+      perspY = 0.01 * perspY
+    }
+    const perspSafety = Math.pow(10, this.state.perspClamping)
     for (let line of postBox) {
       const p1 = restorePoint(
         transformPersp(
           new V2(line.p1).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
         anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
       const p2 = restorePoint(
         transformPersp(
           new V2(line.p2).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
+          perspX, perspY, perspSafety
         ),
         anchor, postTransform, alongPerspX, alongPerspY, preCenter,
       )
@@ -267,7 +299,7 @@ class TransformMod {
       line.p2.x = p2.x
       line.p2.y = p2.y
     }
-    const boxes = this.state.advanced ? [...preBox, ...postBox] : postBox
+    const boxes = this.state.advancedTools ? [...preBox, ...postBox] : postBox
     this.store.dispatch(setEditScene(Millions.Scene.fromEntities(boxes)))
   }
 }
@@ -284,27 +316,35 @@ function main () {
     constructor (props) {
       super(props)
 
-      this.state = {
-        active: false,
-        advanced: false,
-        perspective: false,
+      this.defaults = {
+        scale: 1,
         alongPerspX: 0,
         alongPerspY: 0,
         alongRot: 0,
         anchorX: 0,
         anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scale: 1,
+        skewX: 0,
+        skewY: 0,
         scaleX: 1,
         scaleY: 1,
+        flipX: false,
+        flipY: false,
         rotate: 0,
         perspX: 0,
         perspY: 0,
+        nudgeXSmall: 0,
+        nudgeXBig: 0,
+        nudgeYSmall: 0,
+        nudgeYBig: 0,
+      }
+      this.state = {
+        ...this.defaults,
+        active: false,
+        advancedTools: false,
+        warpTools: false,
+        translateTools: false,
+        relativePersp: true,
+        perspClamping: -5,
       }
 
       this.transformMod = new TransformMod(store, this.state)
@@ -323,51 +363,20 @@ function main () {
     }
 
     onReset (key) {
-      const defaults = {
-        scale: 1,
-        alongPerspX: 0,
-        alongPerspY: 0,
-        alongRot: 0,
-        anchorX: 0,
-        anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scaleX: 1,
-        scaleY: 1,
-        rotate: 0,
-        perspX: 0,
-        perspY: 0,
-      }
       let changedState = {}
-      changedState[key] = defaults[key]
+      changedState[key] = this.defaults[key]
       this.setState(changedState)
+    }
+
+    onResetAll (key) {
+      this.setState({...this.defaults})
     }
 
     onCommit () {
       this.transformMod.commit()
       this.setState({
+        ...this.defaults,
         active: false,
-        scale: 1,
-        alongPerspX: 0,
-        alongPerspY: 0,
-        alongRot: 0,
-        anchorX: 0,
-        anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scaleX: 1,
-        scaleY: 1,
-        rotate: 0,
-        perspX: 0,
-        perspY: 0,
       })
     }
 
@@ -392,12 +401,15 @@ function main () {
       )
     }
 
+    // TODO: is it possible to unify renderCheckbox and renderSlider into a Mod Support library?
     renderSlider (key, props) {
       props = {
         ...props,
         value: this.state[key],
         onChange: e => this.setState({ [key]: parseFloatOrDefault(e.target.value) })
       }
+      // TODO: make rangeProps be an optional param which defaults to numberProps but
+      // can be overridden, so that we can allow numberProps to not have min/max
       const rangeProps = {
         ...props
       }
@@ -406,7 +418,7 @@ function main () {
       }
       return e('div', null,
         key,
-        e('input', { style: { width: '3em' }, type: 'number', ...numberProps }),
+        e('input', { style: { width: '4em' }, type: 'number', ...numberProps }),
         e('input', { type: 'range', ...rangeProps, onFocus: e => e.target.blur() }),
         e('button', { onClick: () => this.onReset(key) }, 'Reset')
       )
@@ -415,16 +427,12 @@ function main () {
     render () {
       let tools = []
       if (this.state.active) {
-        tools = [
-          this.renderCheckbox('advanced'),
-          this.renderCheckbox('perspective'),
-        ]
-        if (this.state.advanced) {
-          if (this.state.perspective) {
+        if (this.state.advancedTools) {
+          if (this.state.warpTools) {
             tools = [
               ...tools,
-              this.renderSlider('alongPerspX', { min: -1, max: 1, step: 0.01 }),
-              this.renderSlider('alongPerspY', { min: -1, max: 1, step: 0.01 }),
+              this.renderSlider('alongPerspX', { min: -0.5, max: 0.5, step: 0.001 }),
+              this.renderSlider('alongPerspY', { min: -0.5, max: 0.5, step: 0.001 }),
             ]
           }
           tools = [
@@ -432,31 +440,58 @@ function main () {
             this.renderSlider('alongRot', { min: -180, max: 180, step: 1 }),
             this.renderSlider('anchorX', { min: -0.5, max: 0.5, step: 0.01 }),
             this.renderSlider('anchorY', { min: -0.5, max: 0.5, step: 0.01 }),
-            this.renderSlider('nudgeX', { min: -20, max: 20, step: 0.1 }),
-            this.renderSlider('nudgeY', { min: -20, max: 20, step: 0.1 }),
+          ]
+        }
+        if (this.state.warpTools) {
+          tools = [
+            ...tools,
+            this.renderSlider('skewX', { min: -2, max: 2, step: 0.01 }),
+            this.renderSlider('skewY', { min: -2, max: 2, step: 0.01 }),
           ]
         }
         tools = [
           ...tools,
-          this.renderSlider('shearX', { min: -2, max: 2, step: 0.01 }),
-          this.renderSlider('shearY', { min: -2, max: 2, step: 0.01 }),
+          this.renderSlider('scaleX', { min: 0, max: 10, step: 0.01 }),
+          this.renderSlider('scaleY', { min: 0, max: 10, step: 0.01 }),
+          this.renderSlider('scale', { min: 0, max: 10, step: 0.01 }),
           this.renderCheckbox('flipX'),
           this.renderCheckbox('flipY'),
-          this.renderSlider('scaleX', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scaleY', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scale', { min: 0, max: 2, step: 0.01 }),
           this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
         ]
-        if (this.state.perspective) {
+        if (this.state.warpTools) {
+          if (this.state.advancedTools) {
+            tools = [
+              ...tools,
+              this.renderCheckbox('relativePersp'),
+              this.renderSlider('perspClamping', { min: -5, max: 0, step: 0.01 }),
+            ]
+          }
           tools = [
             ...tools,
             this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
             this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
           ]
         }
+        if (this.state.translateTools) {
+          tools = [
+            ...tools,
+            this.renderSlider('nudgeXSmall', { min: -10, max: 10, step: 0.1 }),
+            this.renderSlider('nudgeXBig', { min: -2000, max: 2000, step: 10 }),
+            this.renderSlider('nudgeYSmall', { min: -10, max: 10, step: 0.1 }),
+            this.renderSlider('nudgeYBig', { min: -2000, max: 2000, step: 10 }),
+          ]
+        }
+        tools = [
+          ...tools,
+          e('hr'),
+          this.renderCheckbox('advancedTools'),
+          this.renderCheckbox('warpTools'),
+          this.renderCheckbox('translateTools'),
+        ]
         tools = [
           ...tools,
           e('button', { style: { float: 'left' }, onClick: () => this.onCommit() }, 'Commit'),
+          e('button', { style: { float: 'left' }, onClick: () => this.onResetAll() }, 'Reset'),
         ]
       }
       return e('div',
@@ -529,11 +564,14 @@ function buildRotTransform(rot) {
   return [u.x, v.x, u.y, v.y, 0, 0]
 }
 function preparePointAlong(p, preCenter, alongPerspX, alongPerspY, preTransform) {
-  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY).transform(preTransform)
+  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY, 0).transform(preTransform)
 }
-function transformPersp(p, perspX, perspY) {
+function transformPersp(p, perspX, perspY, epsilon) {
   const pt = new V2(p)
-  const w = (1 + 0.01 * perspX * pt.x + 0.01 * perspY * pt.y)
+  let w = (1 + perspX * pt.x + perspY * pt.y)
+  if (Math.abs(w) < epsilon) {
+      w = Math.sign(w) * epsilon
+  }
   pt.x = pt.x / w
   pt.y = pt.y / w
   return pt
@@ -541,7 +579,7 @@ function transformPersp(p, perspX, perspY) {
 function restorePoint(p, anchor, postTransform, alongPerspX, alongPerspY, preCenter) {
   return transformPersp(
     p.add(anchor).transform(postTransform),
-    alongPerspX, alongPerspY
+    alongPerspX, alongPerspY, 0
   ).add(preCenter)
 }
 
@@ -612,6 +650,6 @@ function genBoundingBox (x1, y1, x2, y2, anchorX, anchorY, anchorSize, thickness
     genLine(x2, y1, x1, y1, thickness, color, zIndex + 0.3),
     // Transformation anchor
     genLine(anchorX, anchorY, anchorX + anchorSize, anchorY, thickness * 2, color, zIndex + 0.4),
-    genLine(anchorX, anchorY, anchorX, anchorY + anchorSize, thickness * 2, color, zIndex + 0.5),
+    genLine(anchorX, anchorY, anchorX, anchorY - anchorSize, thickness * 2, color, zIndex + 0.5),
   ]
 }
