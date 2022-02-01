@@ -401,12 +401,15 @@ function main () {
       )
     }
 
+    // TODO: is it possible to unify renderCheckbox and renderSlider into a Mod Support library?
     renderSlider (key, props) {
       props = {
         ...props,
         value: this.state[key],
         onChange: e => this.setState({ [key]: parseFloatOrDefault(e.target.value) })
       }
+      // TODO: make rangeProps be an optional param which defaults to numberProps but
+      // can be overridden, so that we can allow numberProps to not have min/max
       const rangeProps = {
         ...props
       }
@@ -448,9 +451,9 @@ function main () {
         }
         tools = [
           ...tools,
-          this.renderSlider('scaleX', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scaleY', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scale', { min: 0, max: 2, step: 0.01 }),
+          this.renderSlider('scaleX', { min: 0, max: 10, step: 0.01 }),
+          this.renderSlider('scaleY', { min: 0, max: 10, step: 0.01 }),
+          this.renderSlider('scale', { min: 0, max: 10, step: 0.01 }),
           this.renderCheckbox('flipX'),
           this.renderCheckbox('flipY'),
           this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
