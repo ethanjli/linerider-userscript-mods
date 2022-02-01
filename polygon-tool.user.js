@@ -106,8 +106,8 @@ function main() {
         "Polygon Tool",
         e('div', null,
           'Sides (small)',
-          e('input', { style: { width: '4em' }, type: 'number', onChange: onSidesSmallChange, min: 1, value: this.state.sidesSmall, step: 1 }),
-          e('input', { type: 'range', onChange: onSidesSmallChange, onFocus: e => e.target.blur(), min: 1, max: 10, step: 1, value: this.state.sidesSmall })
+          e('input', { style: { width: '4em' }, type: 'number', onChange: onSidesSmallChange, min: 3, value: this.state.sidesSmall, step: 1 }),
+          e('input', { type: 'range', onChange: onSidesSmallChange, onFocus: e => e.target.blur(), min: 3, max: 10, step: 1, value: this.state.sidesSmall })
         ),
         e('div', null,
           'Sides (large)',
