@@ -1,18 +1,24 @@
 // ==UserScript==
-// @name         Line Rider Selection Transform Mod
+// @name         Line Rider Selection Shader Mod
 // @namespace    http://tampermonkey.net/
-// @version      0.6.0
-// @description  Adds ability to transform selections
-// @author       David Lu & Ethan Li
+// @version      0.5.1
+// @description  Adds ability to shade in selections
+// @author       David Lu
 // @match        https://www.linerider.com/*
 // @match        https://*.official-linerider.com/*
 // @match        http://localhost:8000/*
-// @downloadURL  https://github.com/EmergentStudios/linerider-userscript-mods/raw/master/selection-transform.user.js
 // @grant        none
+// @require      https://raw.githubusercontent.com/EmergentStudios/linerider-userscript-mods/master/lib/sortedindex.js
+// @require      https://raw.githubusercontent.com/EmergentStudios/linerider-userscript-mods/master/lib/sortedindexby.js
+// @downloadURL  https://github.com/EmergentStudios/linerider-userscript-mods/raw/master/selection-shader-mod.user.js
 // ==/UserScript==
 
 // jshint asi: true
 // jshint esversion: 6
+
+/* deps */
+const sortedIndex = window.lodash.sortedindex
+const sortedIndexBy = window.lodash.sortedindexby
 
 /* constants */
 const SELECT_TOOL = 'SELECT_TOOL'
@@ -25,12 +31,21 @@ const setTool = (tool) => ({
   payload: tool
 })
 
-const updateLines = (linesToRemove, linesToAdd) => ({
-  type: 'UPDATE_LINES',
-  payload: { linesToRemove, linesToAdd }
+const setToolState = (toolId, state) => ({
+  type: 'SET_TOOL_STATE',
+  payload: state,
+  meta: { id: toolId }
 })
 
-const setLines = (line) => updateLines(null, line)
+const setSelectToolState = toolState => setToolState(SELECT_TOOL, toolState)
+
+const updateLines = (linesToRemove, linesToAdd, name) => ({
+  type: 'UPDATE_LINES',
+  payload: { linesToRemove, linesToAdd },
+  meta: { name: name }
+})
+
+const addLines = (line) => updateLines(null, line, 'ADD_LINES')
 
 const commitTrackChanges = () => ({
   type: 'COMMIT_TRACK_CHANGES'
@@ -40,19 +55,15 @@ const revertTrackChanges = () => ({
   type: 'REVERT_TRACK_CHANGES'
 })
 
-const setEditScene = (scene) => ({
-  type: 'SET_RENDERER_SCENE',
-  payload: { key: 'edit', scene }
-})
-
 /* selectors */
 const getActiveTool = state => state.selectedTool
 const getToolState = (state, toolId) => state.toolState[toolId]
 const getSelectToolState = state => getToolState(state, SELECT_TOOL)
 const getSimulatorCommittedTrack = state => state.simulator.committedEngine
-const getEditorZoom = state => state.camera.editorZoom
+const getTrackLinesLocked = state => state.trackLinesLocked
+const getSelectedLineType = state => getTrackLinesLocked(state) ? 2 : state.selectedLineType
 
-class TransformMod {
+class ShadeMod {
   constructor (store, initState) {
     this.store = store
 
@@ -61,17 +72,45 @@ class TransformMod {
 
     this.track = getSimulatorCommittedTrack(this.store.getState())
     this.selectedPoints = EMPTY_SET
+    this.lineType = getSelectedLineType(this.store.getState())
 
     store.subscribeImmediate(() => {
+      if (this.state.active) {
+        const selectToolState = getSelectToolState(this.store.getState())
+        if (selectToolState && selectToolState.multi && selectToolState.status.pressed) {
+          // prevent multi-adjustment
+          this.store.dispatch(setSelectToolState({ status: { inactive: true } }))
+        }
+      }
+
       this.onUpdate()
+    })
+
+    window.addModMiddleware(store => next => action => {
+      switch (action.type) {
+        case 'TRIGGER_COMMAND':
+          switch (action.payload) {
+            case 'triggers.removeLastLine':
+              if (this.state.active) {
+                return
+              }
+              break
+            case 'triggers.undo':
+            case 'triggers.redo':
+              if (this.state.active && this.changed) {
+                store.dispatch(revertTrackChanges())
+                this.changed = false
+              }
+          }
+      }
+      return next(action)
     })
   }
 
-  commit () {
+  commitShade () {
     if (this.changed) {
       this.store.dispatch(commitTrackChanges())
       this.store.dispatch(revertTrackChanges())
-      this.store.dispatch(setEditScene(new Millions.Scene()))
       this.changed = false
       return true
     }
@@ -79,6 +118,13 @@ class TransformMod {
 
   onUpdate (nextState = this.state) {
     let shouldUpdate = false
+
+    if (!this.state.active && nextState.active) {
+      window.previewLinesInFastSelect = true
+    }
+    if (this.state.active && !nextState.active) {
+      window.previewLinesInFastSelect = false
+    }
 
     if (this.state !== nextState) {
       this.state = nextState
@@ -104,171 +150,42 @@ class TransformMod {
         this.selectedPoints = selectedPoints
         shouldUpdate = true
       }
+
+      const lineType = getSelectedLineType(this.store.getState())
+      if (this.lineType !== lineType) {
+        this.lineType = lineType
+        shouldUpdate = true
+      }
     }
 
-    if (!shouldUpdate) {
-      return
+    if (shouldUpdate) {
+      if (this.changed) {
+        this.store.dispatch(revertTrackChanges())
+        this.changed = false
+      }
+
+      if (this.state.active && this.selectedPoints.size > 0) {
+        const selectedLines = [...getLinesFromPoints(this.selectedPoints)]
+          .map(id => this.track.getLine(id))
+          .filter(l => l)
+
+        let shadeLines = []
+        for (let { p1, p2 } of genFill(selectedLines, this.state)) {
+          shadeLines.push({
+            x1: p1.x,
+            y1: p1.y,
+            x2: p2.x,
+            y2: p2.y,
+            type: this.lineType
+          })
+        }
+
+        if (shadeLines.length > 0) {
+          this.store.dispatch(addLines(shadeLines))
+          this.changed = true
+        }
+      }
     }
-
-    if (this.changed) {
-      this.store.dispatch(revertTrackChanges())
-      this.store.dispatch(setEditScene(new Millions.Scene()))
-      this.changed = false
-    }
-
-    if (!this.active()) {
-      return
-    }
-
-    const pretransformedLines = [...getLinesFromPoints(this.selectedPoints)]
-      .map(id => this.track.getLine(id))
-      .filter(l => l)
-    const preBB = getBoundingBox(pretransformedLines)
-    const preCenter = new V2({
-      x: preBB.x + 0.5 * preBB.width,
-      y: preBB.y + 0.5 * preBB.height
-    })
-
-    const alongRot = this.state.alongRot * Math.PI / 180
-    const preTransform = buildRotTransform(-alongRot)
-    const selectedLines = []
-    for (let line of pretransformedLines) {
-      const p1 = preparePointAlong(
-        new V2(line.p1),
-        preCenter, this.state.alongPerspX, this.state.alongPerspY, preTransform
-      )
-      const p2 = preparePointAlong(
-        new V2(line.p2),
-        preCenter, this.state.alongPerspX, this.state.alongPerspY, preTransform
-      )
-      selectedLines.push({original: line, p1, p2})
-    }
-    const bb = getBoundingBox(selectedLines)
-    const anchor = new V2({
-      x: bb.x + (0.5 + this.state.anchorX) * bb.width,
-      y: bb.y + (0.5 + this.state.anchorY) * bb.height
-    })
-    const nudge = new V2({
-      x: this.state.nudgeX,
-      y: this.state.nudgeY
-    })
-
-    const transform = this.getTransform()
-    const transformedLines = []
-
-    const postTransform = buildRotTransform(alongRot)
-    for (let line of selectedLines) {
-      const p1 = restorePoint(
-        transformPersp(
-          new V2(line.p1).sub(anchor).add(nudge).transform(transform),
-          this.state.perspX, this.state.perspY
-        ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
-      const p2 = restorePoint(
-        transformPersp(
-          new V2(line.p2).sub(anchor).add(nudge).transform(transform),
-          this.state.perspX, this.state.perspY
-        ),
-        anchor, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter,
-      )
-
-      transformedLines.push({
-        ...line.original.toJSON(),
-        x1: p1.x,
-        y1: p1.y,
-        x2: p2.x,
-        y2: p2.y
-      })
-    }
-    this.store.dispatch(setLines(transformedLines))
-
-    this.drawBoundingBoxes(
-      bb, anchor, transform, postTransform, this.state.alongPerspX, this.state.alongPerspY, preCenter
-    )
-
-    this.changed = true
-  }
-
-  getTransform() {
-    let scaleX = this.state.scale * this.state.scaleX
-    if (this.state.flipX) {
-      scaleX *= -1
-    }
-    let scaleY = this.state.scale * this.state.scaleY
-    if (this.state.flipY) {
-      scaleY *= -1
-    }
-    const transform = buildAffineTransform(
-      this.state.shearX, this.state.shearY,
-      scaleX, scaleY,
-      this.state.rotate * Math.PI / 180
-    )
-    return transform
-  }
-
-  active() {
-    return this.state.active && this.selectedPoints.size > 0 && (
-      this.state.alongPerspX !== 0 || this.state.alongPerspY !== 0 ||
-      this.state.alongRot !== 0 ||
-      this.state.anchorX !== 0 || this.state.anchorY !== 0 ||
-      this.state.nudgeX || this.state.nudgeY ||
-      this.state.shearX !== 0 || this.state.shearY !== 0 ||
-      this.state.flipX || this.state.flipY ||
-      this.state.scaleX !== 1 || this.state.scaleY !== 1 || this.state.scale !== 1 ||
-      this.state.rotate !== 0 ||
-      this.state.perspX || this.state.perspY
-    )
-  }
-
-  drawBoundingBoxes(bb, anchor, transform, postTransform, alongPerspX, alongPerspY, preCenter) {
-    const zoom = getEditorZoom(this.store.getState())
-    const preBox = genBoundingBox(
-      bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
-      anchor.x, anchor.y, 20 / zoom,
-      1 / zoom, new Millions.Color(0, 0, 0, 64), 0
-    )
-    for (let line of preBox) {
-      const p1 = restorePoint(
-        new V2(line.p1).sub(anchor),
-        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
-      )
-      const p2 = restorePoint(
-        new V2(line.p2).sub(anchor),
-        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
-      )
-      line.p1.x = p1.x
-      line.p1.y = p1.y
-      line.p2.x = p2.x
-      line.p2.y = p2.y
-    }
-    const postBox = genBoundingBox(
-      bb.x, bb.y, bb.x + bb.width, bb.y + bb.height,
-      anchor.x, anchor.y, 20 / zoom,
-      1 / zoom, new Millions.Color(0, 0, 0, 255), 1
-    )
-    for (let line of postBox) {
-      const p1 = restorePoint(
-        transformPersp(
-          new V2(line.p1).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
-        ),
-        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
-      )
-      const p2 = restorePoint(
-        transformPersp(
-          new V2(line.p2).sub(anchor).transform(transform),
-          this.state.perspX, this.state.perspY
-        ),
-        anchor, postTransform, alongPerspX, alongPerspY, preCenter,
-      )
-      line.p1.x = p1.x
-      line.p1.y = p1.y
-      line.p2.x = p2.x
-      line.p2.y = p2.y
-    }
-    const boxes = this.state.advanced ? [...preBox, ...postBox] : postBox
-    this.store.dispatch(setEditScene(Millions.Scene.fromEntities(boxes)))
   }
 }
 
@@ -280,34 +197,20 @@ function main () {
 
   const e = React.createElement
 
-  class TransformModComponent extends React.Component {
+  Object.defineProperty(window.Tools.SELECT_TOOL, 'usesSwatches', { value: true })
+
+  class ShadeModComponent extends React.Component {
     constructor (props) {
       super(props)
 
       this.state = {
         active: false,
-        advanced: false,
-        perspective: false,
-        alongPerspX: 0,
-        alongPerspY: 0,
-        alongRot: 0,
-        anchorX: 0,
-        anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scale: 1,
-        scaleX: 1,
-        scaleY: 1,
-        rotate: 0,
-        perspX: 0,
-        perspY: 0,
+        angle: 0,
+        spacing: -0.2,
+        offset: 0
       }
 
-      this.transformMod = new TransformMod(store, this.state)
+      this.shadeMod = new ShadeMod(store, this.state)
 
       store.subscribe(() => {
         const selectToolActive = getActiveTool(store.getState()) === SELECT_TOOL
@@ -319,56 +222,7 @@ function main () {
     }
 
     componentWillUpdate (nextProps, nextState) {
-      this.transformMod.onUpdate(nextState)
-    }
-
-    onReset (key) {
-      const defaults = {
-        scale: 1,
-        alongPerspX: 0,
-        alongPerspY: 0,
-        alongRot: 0,
-        anchorX: 0,
-        anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scaleX: 1,
-        scaleY: 1,
-        rotate: 0,
-        perspX: 0,
-        perspY: 0,
-      }
-      let changedState = {}
-      changedState[key] = defaults[key]
-      this.setState(changedState)
-    }
-
-    onCommit () {
-      this.transformMod.commit()
-      this.setState({
-        active: false,
-        scale: 1,
-        alongPerspX: 0,
-        alongPerspY: 0,
-        alongRot: 0,
-        anchorX: 0,
-        anchorY: 0,
-        nudgeX: 0,
-        nudgeY: 0,
-        shearX: 0,
-        shearY: 0,
-        flipX: false,
-        flipY: false,
-        scaleX: 1,
-        scaleY: 1,
-        rotate: 0,
-        perspX: 0,
-        perspY: 0,
-      })
+      this.shadeMod.onUpdate(nextState)
     }
 
     onActivate () {
@@ -380,88 +234,37 @@ function main () {
       }
     }
 
-    renderCheckbox (key, props) {
-      props = {
-        ...props,
-        checked: this.state[key],
-        onChange: e => this.setState({ [key]: e.target.checked })
+    onCommit () {
+      const committed = this.shadeMod.commitShade()
+      if (committed) {
+        this.setState({ active: false })
       }
-      return e('div', null,
-        key,
-        e('input', { type: 'checkbox', ...props })
-      )
     }
 
     renderSlider (key, props) {
       props = {
         ...props,
         value: this.state[key],
-        onChange: e => this.setState({ [key]: parseFloatOrDefault(e.target.value) })
-      }
-      const rangeProps = {
-        ...props
-      }
-      const numberProps = {
-        ...props
+        onChange: e => this.setState({ [key]: parseFloat(e.target.value) })
       }
       return e('div', null,
         key,
-        e('input', { style: { width: '3em' }, type: 'number', ...numberProps }),
-        e('input', { type: 'range', ...rangeProps, onFocus: e => e.target.blur() }),
-        e('button', { onClick: () => this.onReset(key) }, 'Reset')
+        e('input', { style: { width: '3em' }, type: 'number', ...props }),
+        e('input', { type: 'range', ...props, onFocus: e => e.target.blur() })
       )
     }
 
     render () {
-      let tools = []
-      if (this.state.active) {
-        tools = [
-          this.renderCheckbox('advanced'),
-          this.renderCheckbox('perspective'),
-        ]
-        if (this.state.advanced) {
-          if (this.state.perspective) {
-            tools = [
-              ...tools,
-              this.renderSlider('alongPerspX', { min: -1, max: 1, step: 0.01 }),
-              this.renderSlider('alongPerspY', { min: -1, max: 1, step: 0.01 }),
-            ]
-          }
-          tools = [
-            ...tools,
-            this.renderSlider('alongRot', { min: -180, max: 180, step: 1 }),
-            this.renderSlider('anchorX', { min: -0.5, max: 0.5, step: 0.01 }),
-            this.renderSlider('anchorY', { min: -0.5, max: 0.5, step: 0.01 }),
-            this.renderSlider('nudgeX', { min: -20, max: 20, step: 0.1 }),
-            this.renderSlider('nudgeY', { min: -20, max: 20, step: 0.1 }),
-          ]
-        }
-        tools = [
-          ...tools,
-          this.renderSlider('shearX', { min: -2, max: 2, step: 0.01 }),
-          this.renderSlider('shearY', { min: -2, max: 2, step: 0.01 }),
-          this.renderCheckbox('flipX'),
-          this.renderCheckbox('flipY'),
-          this.renderSlider('scaleX', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scaleY', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('scale', { min: 0, max: 2, step: 0.01 }),
-          this.renderSlider('rotate', { min: -180, max: 180, step: 1 }),
-        ]
-        if (this.state.perspective) {
-          tools = [
-            ...tools,
-            this.renderSlider('perspX', { min: -1, max: 1, step: 0.01 }),
-            this.renderSlider('perspY', { min: -1, max: 1, step: 0.01 }),
-          ]
-        }
-        tools = [
-          ...tools,
-          e('button', { style: { float: 'left' }, onClick: () => this.onCommit() }, 'Commit'),
-        ]
-      }
       return e('div',
         null,
-        this.state.active && e('div', null, tools),
+        this.state.active && e('div', null,
+          this.renderSlider('angle', { min: 0, max: 360, step: 1 }),
+          this.renderSlider('spacing', { min: -0.4, max: 10, step: 0.01 }),
+          this.renderSlider('offset', { min: 0, max: 1, step: 0.01 }),
+          e('button', { style: { float: 'left' }, onClick: () => this.onCommit() },
+            'Commit'
+          )
+        ),
         e('button',
           {
             style: {
@@ -469,14 +272,14 @@ function main () {
             },
             onClick: this.onActivate.bind(this)
           },
-          'Transform Mod'
+          'Shade Mod'
         )
       )
     }
   }
 
   // this is a setting and not a standalone tool because it extends the select tool
-  window.registerCustomSetting(TransformModComponent)
+  window.registerCustomSetting(ShadeModComponent)
 }
 
 /* init */
@@ -510,108 +313,115 @@ function getLinesFromPoints (points) {
   return new Set([...points].map(point => point >> 1))
 }
 
-function buildAffineTransform(shearX, shearY, scaleX, scaleY, rot) {
+// takes an iterable of lines and properties and returns an iterable of lines of alternating fill
+function* genFill (lines, { angle = 0, spacing = 0, offset = 0 } = {}) {
   const { V2 } = window
+  /* prep */
 
-  let tShear = [1 + shearX * shearY, shearX, shearY, 1, 0, 0]
-  let tScale = [scaleX, 0, 0, scaleY, 0, 0]
-  let u = V2.from(1, 0).rot(rot).transform(tScale).transform(tShear)
-  let v = V2.from(0, 1).rot(rot).transform(tScale).transform(tShear)
+  // actual spacing
+  spacing = LINE_WIDTH * (1 + spacing)
 
-  return [u.x, v.x, u.y, v.y, 0, 0]
-}
-function buildRotTransform(rot) {
-  const { V2 } = window
+  // actual offset
+  offset = spacing * offset
 
-  let u = V2.from(1, 0).rot(rot)
-  let v = V2.from(0, 1).rot(rot)
+  // degrees to radians
+  let rads = angle / 180 * Math.PI
 
-  return [u.x, v.x, u.y, v.y, 0, 0]
-}
-function preparePointAlong(p, preCenter, alongPerspX, alongPerspY, preTransform) {
-  return transformPersp(p.sub(preCenter), -alongPerspX, -alongPerspY).transform(preTransform)
-}
-function transformPersp(p, perspX, perspY) {
-  const pt = new V2(p)
-  const w = (1 + 0.01 * perspX * pt.x + 0.01 * perspY * pt.y)
-  pt.x = pt.x / w
-  pt.y = pt.y / w
-  return pt
-}
-function restorePoint(p, anchor, postTransform, alongPerspX, alongPerspY, preCenter) {
-  return transformPersp(
-    p.add(anchor).transform(postTransform),
-    alongPerspX, alongPerspY
-  ).add(preCenter)
-}
+  // create angle basis
+  let toAngle = rotateTransform(rads)
+  let fromAngle = rotateTransform(-rads)
 
-function parseFloatOrDefault (string, defaultValue = 0) {
-  const x = parseFloat(string)
-  return isNaN(x) ? defaultValue : x
-}
+  /* build sorted line endpoints */
 
-function getBoundingBox (lines) {
-  if (lines.size === 0) {
-    return {
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0
-    }
-  }
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
+  // accumulate sorted transformed endpoints
+  let points = []
+
+  // sort by x
+  const insertSorted = point => points.splice(sortedIndexBy(points, point, p => p.x), 0, point)
 
   for (let line of lines) {
-    minX = Math.min(line.p1.x, minX)
-    minY = Math.min(line.p1.y, minY)
-    maxX = Math.max(line.p1.x, maxX)
-    maxY = Math.max(line.p1.y, maxY)
+    // TODO: probably don't need id or point.y
+    // transform lines to angle basis
+    let id = line.id
+    let p1 = new V2(line.p1).transform(toAngle)
+    let p2 = new V2(line.p2).transform(toAngle)
 
-    minX = Math.min(line.p2.x, minX)
-    minY = Math.min(line.p2.y, minY)
-    maxX = Math.max(line.p2.x, maxX)
-    maxY = Math.max(line.p2.y, maxY)
+    // sort endpoints
+    if (p1.x < p2.x) {
+      line = { id, p1, p2 }
+    } else {
+      line = { id, p1: p2, p2: p1 }
+    }
+
+    // acc endpoints
+    insertSorted({ id, x: line.p1.x, y: line.p1.y, line })
+    insertSorted({ id, x: line.p2.x, y: line.p2.y, line })
   }
 
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX,
-    height: maxY - minY
+  /* sweep through endpoints and get line fill */
+
+  // keep track of x-axis cursor
+  let currentX = points[0].x + offset
+
+  // keep track of what lines the cursor intersects
+  let currentLines = new Set()
+
+  // keep track of sorted y positions (for inner loop)
+  let ys = []
+
+  for (let point of points) {
+    // sweep through x-axis up to point.x, and accumlulate sorted y position intersections
+    for (; currentX < point.x; currentX += spacing) {
+      // iterate through lines the cursor is intersecting to acc for sweeping
+      for (let { p1, p2 } of currentLines.values()) {
+        // get relative x position of cursor on currentLine
+        let t = (currentX - p1.x) / (p2.x - p1.x)
+
+        // get y position of intersection btwn cursor and currentLine
+        let y = t * (p2.y - p1.y) + p1.y
+
+        // insert sorted
+        ys.splice(sortedIndex(ys, y), 0, y)
+      }
+
+      // keep track of inside/outside fill
+      let currentY = null
+      // vertically sweep through lines
+      for (let y of ys) {
+        if (currentY == null) {
+          // enter fill
+          currentY = y
+        } else if (currentY === y) {
+          // do not include the edge case of exactly overlapping lines
+        } else {
+          // yield the reverse transformed segment between currentY and y
+          yield {
+            p1: V2.from(currentX, currentY).transform(fromAngle),
+            p2: V2.from(currentX, y).transform(fromAngle)
+          }
+          // exit fill
+          currentY = null
+        }
+      }
+
+      // clear ys for next iteration
+      ys.length = 0
+    }
+
+    // enter/exit line segments
+    if (currentLines.has(point.line)) {
+      currentLines.delete(point.line)
+    } else {
+      currentLines.add(point.line)
+    }
   }
 }
 
-function genLine (x1, y1, x2, y2, thickness, color, zIndex) {
-  let p1 = {
-    x: x1,
-    y: y1,
-    colorA: color,
-    colorB: color,
-    thickness
-  }
-  let p2 = {
-    x: x2,
-    y: y2,
-    colorA: color,
-    colorB: color,
-    thickness
-  }
-  return new Millions.Line(p1, p2, 3, zIndex)
-}
+function rotateTransform (rads) {
+  const { V2 } = window
 
+  let u = V2.from(1, 0).rot(rads)
+  let v = V2.from(0, 1).rot(rads)
 
-function genBoundingBox (x1, y1, x2, y2, anchorX, anchorY, anchorSize, thickness, color, zIndex) {
-  return [
-    // Box outline
-    genLine(x1, y1, x1, y2, thickness, color, zIndex),
-    genLine(x1, y2, x2, y2, thickness, color, zIndex + 0.1),
-    genLine(x2, y2, x2, y1, thickness, color, zIndex + 0.2),
-    genLine(x2, y1, x1, y1, thickness, color, zIndex + 0.3),
-    // Transformation anchor
-    genLine(anchorX, anchorY, anchorX + anchorSize, anchorY, thickness * 2, color, zIndex + 0.4),
-    genLine(anchorX, anchorY, anchorX, anchorY + anchorSize, thickness * 2, color, zIndex + 0.5),
-  ]
+  return [u.x, v.x, u.y, v.y, 0, 0]
 }
